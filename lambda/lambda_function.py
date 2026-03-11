@@ -1,6 +1,7 @@
 import json
 import boto3
-import base64
+import time
+import random
 
 sagemaker_runtime = boto3.client("sagemaker-runtime", region_name="us-east-1")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
@@ -90,32 +91,38 @@ def lambda_handler(event, context):
         }
 
 
-def generate_classic(seed):
-    """Generate a superhero name using the LSTM model on SageMaker."""
-    name = seed.lower()
+def predict_next_char(padded_seq):
+    """Call SageMaker endpoint and return predictions array."""
+    response = sagemaker_runtime.invoke_endpoint(
+        EndpointName=SAGEMAKER_ENDPOINT,
+        ContentType="application/json",
+        Body=json.dumps({"instances": [padded_seq]}),
+    )
+    result = json.loads(response["Body"].read().decode("utf-8"))
+    return result["predictions"][0]
 
-    for _ in range(33):
-        # Convert characters to indices
+
+def generate_name_from_seed(seed_text):
+    """Run the LSTM generation loop. Returns name, iterations, avg confidence."""
+    name = seed_text
+    iterations = 0
+    total_confidence = 0.0
+
+    for i in range(33):
         seq = [CHAR_TO_INDEX[c] for c in name if c in CHAR_TO_INDEX]
 
-        # Pad sequence to MAX_SEQ_LEN (pre-padding with zeros)
         if len(seq) >= MAX_SEQ_LEN:
             padded = seq[-MAX_SEQ_LEN:]
         else:
             padded = [0] * (MAX_SEQ_LEN - len(seq)) + seq
 
-        # Call SageMaker endpoint (TF Serving format)
-        response = sagemaker_runtime.invoke_endpoint(
-            EndpointName=SAGEMAKER_ENDPOINT,
-            ContentType="application/json",
-            Body=json.dumps({"instances": [padded]}),
-        )
+        predictions = predict_next_char(padded)
 
-        result = json.loads(response["Body"].read().decode("utf-8"))
-        predictions = result["predictions"][0]
+        pred_index = max(range(len(predictions)), key=lambda j: predictions[j])
+        confidence = predictions[pred_index]
+        total_confidence += confidence
+        iterations += 1
 
-        # Argmax to get predicted character index
-        pred_index = max(range(len(predictions)), key=lambda i: predictions[i])
         pred_char = INDEX_TO_CHAR.get(pred_index, "")
 
         if pred_char == "\t":
@@ -123,18 +130,63 @@ def generate_classic(seed):
 
         name += pred_char
 
-    return {"mode": "classic", "name": name.strip().title(), "seed": seed}
+    avg_confidence = total_confidence / iterations if iterations > 0 else 0
+    return name, iterations, avg_confidence
+
+
+def generate_classic(seed):
+    """Generate a superhero name using the LSTM model on SageMaker."""
+    start_time = time.time()
+
+    seed_lower = seed.lower()
+
+    # First attempt: use full seed
+    name, iterations, avg_confidence = generate_name_from_seed(seed_lower)
+
+    # If the model predicted end immediately (name == seed), retry with
+    # just the first 2-3 characters to force more generation
+    if name.strip() == seed_lower.strip() and len(seed_lower) > 3:
+        truncated = seed_lower[:3]
+        name, iterations, avg_confidence = generate_name_from_seed(truncated)
+
+    # If still just the truncated seed, try first 2 characters
+    if len(name.strip()) <= 3:
+        truncated = seed_lower[:2]
+        name, iterations, avg_confidence = generate_name_from_seed(truncated)
+
+    elapsed = time.time() - start_time
+    final_name = name.strip().title()
+
+    # Check if seed is retained in the output
+    seed_retained = seed.lower()[:3] in final_name.lower()
+
+    return {
+        "mode": "classic",
+        "name": final_name,
+        "seed": seed,
+        "metrics": {
+            "latency_ms": round(elapsed * 1000),
+            "iterations": iterations,
+            "avg_confidence": round(avg_confidence, 3),
+            "chars_generated": len(final_name) - min(len(seed), 3),
+            "name_length": len(final_name),
+            "seed_retained": seed_retained,
+            "model_params": "16,229",
+            "model_type": "LSTM (character-level)",
+        },
+    }
 
 
 def generate_bedrock(seed):
     """Generate a superhero name, backstory, and portrait using Bedrock."""
+    start_time = time.time()
+
     # Step 1: Generate name + backstory with Nova Lite
     prompt = (
         f'Create a unique superhero character inspired by the seed word "{seed}". '
-        f"Choose a cheerful, nature-inspired, or whimsical name (avoid dark, violent, or edgy names). "
-        f"The backstory should be family-friendly and focus on positive themes like "
-        f"courage, kindness, discovery, or protecting nature. Avoid any violence, "
-        f"weapons, darkness, or conflict in the backstory. "
+        f"Be creative and interesting — the character can be quirky, mysterious, funny, or unconventional. "
+        f"Avoid graphic violence or weapons, but the character can have flaws, face real challenges, "
+        f"or have an unusual origin. Boring or overly sweet characters are discouraged. "
         f"Respond in this exact JSON format and nothing else:\n"
         f'{{"name": "The Superhero Name", "backstory": "A 2-3 sentence origin story."}}'
     )
@@ -145,13 +197,16 @@ def generate_bedrock(seed):
         inferenceConfig={"maxTokens": 300, "temperature": 0.8},
     )
 
+    text_time = time.time() - start_time
+
     response_text = text_response["output"]["message"]["content"][0]["text"]
+    input_tokens = text_response["usage"]["inputTokens"]
+    output_tokens = text_response["usage"]["outputTokens"]
 
     # Parse the JSON from the response
     try:
         character = json.loads(response_text)
     except json.JSONDecodeError:
-        # Try to extract JSON from the response
         start = response_text.find("{")
         end = response_text.rfind("}") + 1
         if start != -1 and end > start:
@@ -163,25 +218,24 @@ def generate_bedrock(seed):
     backstory = character.get("backstory", "A mysterious hero emerges.")
 
     # Step 2: Generate hero portrait with Titan Image Generator
-    # Sanitize the hero name to avoid content filter triggers
     safe_name = sanitize_for_image(hero_name)
+    image_start = time.time()
 
-    # Try multiple prompts with increasing safety
     image_prompts = [
         (
-            f"A colorful cartoon illustration of a friendly character named {safe_name}. "
-            f"Wearing a bright costume, smiling, arms at sides, "
-            f"sunny sky background, children's book art style, "
-            f"safe for all ages, positive and cheerful."
+            f"A dynamic comic book illustration of {safe_name}. "
+            f"Vibrant colors, expressive character design, "
+            f"cityscape background, vintage comic book style."
         ),
         (
-            "A colorful cartoon of a friendly costumed character. "
-            "Bright primary colors, big smile, cape, sunny sky, "
-            "children's book illustration style."
+            "A vibrant comic book illustration of a costumed character. "
+            "Bold colors, expressive design, cityscape background, "
+            "vintage comic book art style."
         ),
     ]
 
     image_base64 = None
+    image_generated = False
     for img_prompt in image_prompts:
         try:
             image_response = bedrock_runtime.invoke_model(
@@ -201,6 +255,7 @@ def generate_bedrock(seed):
             )
             image_result = json.loads(image_response["body"].read())
             image_base64 = image_result["images"][0]
+            image_generated = True
             break
         except Exception as e:
             if "blocked" in str(e).lower() or "content" in str(e).lower():
@@ -208,11 +263,27 @@ def generate_bedrock(seed):
                 continue
             raise
 
+    image_time = time.time() - image_start
+    total_time = time.time() - start_time
+
+    seed_retained = seed.lower()[:3] in hero_name.lower()
+
     result = {
         "mode": "bedrock",
         "name": hero_name,
         "backstory": backstory,
         "seed": seed,
+        "metrics": {
+            "latency_ms": round(total_time * 1000),
+            "text_latency_ms": round(text_time * 1000),
+            "image_latency_ms": round(image_time * 1000) if image_generated else None,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "name_length": len(hero_name),
+            "seed_retained": seed_retained,
+            "image_generated": image_generated,
+            "model_type": "Nova Lite (foundation model)",
+        },
     }
     if image_base64:
         result["imageData"] = image_base64

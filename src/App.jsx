@@ -1,6 +1,75 @@
 import { useState } from 'react'
 import { generateName, getRemainingCalls } from './services/apiService'
 
+function MetricsPanel({ metrics, mode }) {
+  if (!metrics) return null
+
+  return (
+    <div style={styles.metricsPanel}>
+      <p style={styles.metricsTitle}>Evaluation Metrics</p>
+      <div style={styles.metricsGrid}>
+        <div style={styles.metricItem}>
+          <span style={styles.metricValue}>{(metrics.latency_ms / 1000).toFixed(1)}s</span>
+          <span style={styles.metricLabel}>Latency</span>
+        </div>
+        <div style={styles.metricItem}>
+          <span style={styles.metricValue}>{metrics.name_length}</span>
+          <span style={styles.metricLabel}>Name Length</span>
+        </div>
+        <div style={styles.metricItem}>
+          <span style={{
+            ...styles.metricValue,
+            color: metrics.seed_retained ? '#4ade80' : '#f87171',
+          }}>
+            {metrics.seed_retained ? 'Yes' : 'No'}
+          </span>
+          <span style={styles.metricLabel}>Seed Retained</span>
+        </div>
+        {mode === 'classic' && (
+          <>
+            <div style={styles.metricItem}>
+              <span style={styles.metricValue}>{metrics.iterations}</span>
+              <span style={styles.metricLabel}>Iterations</span>
+            </div>
+            <div style={styles.metricItem}>
+              <span style={styles.metricValue}>{(metrics.avg_confidence * 100).toFixed(1)}%</span>
+              <span style={styles.metricLabel}>Avg Confidence</span>
+            </div>
+            <div style={styles.metricItem}>
+              <span style={styles.metricValue}>{metrics.model_params}</span>
+              <span style={styles.metricLabel}>Parameters</span>
+            </div>
+          </>
+        )}
+        {mode === 'bedrock' && (
+          <>
+            <div style={styles.metricItem}>
+              <span style={styles.metricValue}>{metrics.input_tokens + metrics.output_tokens}</span>
+              <span style={styles.metricLabel}>Total Tokens</span>
+            </div>
+            <div style={styles.metricItem}>
+              <span style={{
+                ...styles.metricValue,
+                color: metrics.image_generated ? '#4ade80' : '#f87171',
+              }}>
+                {metrics.image_generated ? 'Yes' : 'Filtered'}
+              </span>
+              <span style={styles.metricLabel}>Image Generated</span>
+            </div>
+            {metrics.image_latency_ms && (
+              <div style={styles.metricItem}>
+                <span style={styles.metricValue}>{(metrics.image_latency_ms / 1000).toFixed(1)}s</span>
+                <span style={styles.metricLabel}>Image Latency</span>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      <p style={styles.metricModelType}>{metrics.model_type}</p>
+    </div>
+  )
+}
+
 function App() {
   const [seed, setSeed] = useState('')
   const [classicResult, setClassicResult] = useState(null)
@@ -22,7 +91,6 @@ function App() {
     setClassicLoading(true)
     setBedrockLoading(true)
 
-    // Fire both requests simultaneously
     const classicPromise = generateName(seed, 'classic')
       .then(data => {
         setClassicResult(data)
@@ -113,6 +181,7 @@ function App() {
                 <div style={styles.result}>
                   <p style={styles.resultLabel}>Generated Name</p>
                   <p style={styles.heroName}>{classicResult.name}</p>
+                  <MetricsPanel metrics={classicResult.metrics} mode="classic" />
                 </div>
               )}
               {classicResult?.error && (
@@ -159,6 +228,7 @@ function App() {
                       />
                     </>
                   )}
+                  <MetricsPanel metrics={bedrockResult.metrics} mode="bedrock" />
                 </div>
               )}
               {bedrockResult?.error && (
@@ -371,6 +441,49 @@ const styles = {
   placeholder: {
     color: '#64748b',
     fontSize: '0.9rem',
+    fontStyle: 'italic',
+  },
+  metricsPanel: {
+    marginTop: 20,
+    padding: 16,
+    background: 'rgba(0,0,0,0.2)',
+    borderRadius: 12,
+    border: '1px solid rgba(255,255,255,0.06)',
+  },
+  metricsTitle: {
+    fontSize: '0.75rem',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: '0.1em',
+    marginBottom: 12,
+  },
+  metricsGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, 1fr)',
+    gap: 12,
+  },
+  metricItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 2,
+  },
+  metricValue: {
+    fontSize: '1.1rem',
+    fontWeight: 700,
+    color: '#e2e8f0',
+  },
+  metricLabel: {
+    fontSize: '0.65rem',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+  },
+  metricModelType: {
+    fontSize: '0.7rem',
+    color: '#475569',
+    textAlign: 'center',
+    marginTop: 10,
     fontStyle: 'italic',
   },
   poweredBy: {

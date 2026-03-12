@@ -1,4 +1,5 @@
 import json
+import math
 import boto3
 import time
 import random
@@ -102,13 +103,28 @@ def predict_next_char(padded_seq):
     return result["predictions"][0]
 
 
-def generate_name_from_seed(seed_text):
-    """Run the LSTM generation loop. Returns name, iterations, avg confidence."""
+def generate_name_from_seed(seed_text, temperature=0.8):
+    """Run the LSTM generation loop with temperature sampling and tab suppression.
+
+    Improvements:
+    1. Auto-append space for word seeds (4+ chars) to encourage compound names
+    2. Tab suppression — force at least MIN_GENERATED chars before allowing stop
+    3. Temperature sampling — sample from distribution instead of argmax
+    """
+    TAB_INDEX = 1
+    MIN_GENERATED = 3
+
     name = seed_text
+    # Word seeds get a space appended so the model generates a second word
+    # (e.g., "shadow " → "shadow stark" instead of immediately stopping)
+    if len(name) >= 4 and not name.endswith(" "):
+        name += " "
+
     iterations = 0
     total_confidence = 0.0
+    generated_count = 0
 
-    for i in range(33):
+    for i in range(40):
         seq = [CHAR_TO_INDEX[c] for c in name if c in CHAR_TO_INDEX]
 
         if len(seq) >= MAX_SEQ_LEN:
@@ -117,11 +133,33 @@ def generate_name_from_seed(seed_text):
             padded = [0] * (MAX_SEQ_LEN - len(seq)) + seq
 
         predictions = predict_next_char(padded)
+        iterations += 1
 
-        pred_index = max(range(len(predictions)), key=lambda j: predictions[j])
+        # Tab suppression: prevent early stopping before meaningful generation
+        if generated_count < MIN_GENERATED:
+            predictions[TAB_INDEX] = 0.0
+
+        # Temperature sampling: scale logits and sample from distribution
+        preds = [max(p, 1e-10) for p in predictions]
+        log_preds = [math.log(p) / temperature for p in preds]
+        max_lp = max(log_preds)
+        exp_preds = [math.exp(lp - max_lp) for lp in log_preds]
+        total = sum(exp_preds)
+        probs = [ep / total for ep in exp_preds]
+
+        # Weighted random selection
+        r = random.random()
+        cumulative = 0.0
+        pred_index = 0
+        for idx, prob in enumerate(probs):
+            cumulative += prob
+            if r <= cumulative:
+                pred_index = idx
+                break
+
         confidence = predictions[pred_index]
         total_confidence += confidence
-        iterations += 1
+        generated_count += 1
 
         pred_char = INDEX_TO_CHAR.get(pred_index, "")
 
@@ -140,24 +178,14 @@ def generate_classic(seed):
 
     seed_lower = seed.lower()
 
-    # First attempt: use full seed
+    # generate_name_from_seed now handles word seeds natively via
+    # auto-space, tab suppression, and temperature sampling —
+    # no more truncation fallback needed
     name, iterations, avg_confidence = generate_name_from_seed(seed_lower)
-
-    # If the model predicted end immediately (name == seed), retry with
-    # just the first 2-3 characters to force more generation
-    if name.strip() == seed_lower.strip() and len(seed_lower) > 3:
-        truncated = seed_lower[:3]
-        name, iterations, avg_confidence = generate_name_from_seed(truncated)
-
-    # If still just the truncated seed, try first 2 characters
-    if len(name.strip()) <= 3:
-        truncated = seed_lower[:2]
-        name, iterations, avg_confidence = generate_name_from_seed(truncated)
 
     elapsed = time.time() - start_time
     final_name = name.strip().title()
 
-    # Check if seed is retained in the output
     seed_retained = seed.lower()[:3] in final_name.lower()
 
     return {
@@ -168,7 +196,7 @@ def generate_classic(seed):
             "latency_ms": round(elapsed * 1000),
             "iterations": iterations,
             "avg_confidence": round(avg_confidence, 3),
-            "chars_generated": len(final_name) - min(len(seed), 3),
+            "chars_generated": len(final_name) - len(seed),
             "name_length": len(final_name),
             "seed_retained": seed_retained,
             "model_params": "16,229",

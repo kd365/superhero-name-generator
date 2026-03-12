@@ -26,6 +26,8 @@ FLAGGED_TERMS = {
     "blood", "fire", "war", "clash", "fist", "punch",
     "killer", "destroy", "wrath", "terror", "phantom",
     "night", "evil", "demon", "reaper", "savage",
+    "shady", "skull", "blade", "ghost", "hunter", "toxic",
+    "viper", "scream", "crypt", "grave", "scar", "snake",
 }
 
 CORS_HEADERS = {
@@ -245,51 +247,42 @@ def generate_bedrock(seed):
     hero_name = character.get("name", f"The {seed.title()}")
     backstory = character.get("backstory", "A mysterious hero emerges.")
 
-    # Step 2: Generate hero portrait with Titan Image Generator
+    # Step 2: Generate hero portrait with Nova Canvas (replaced Titan — too aggressive filtering)
     safe_name = sanitize_for_image(hero_name)
     image_start = time.time()
 
-    image_prompts = [
-        (
-            f"A dynamic comic book illustration of {safe_name}. "
-            f"Vibrant colors, expressive character design, "
-            f"cityscape background, vintage comic book style."
-        ),
-        (
-            "A vibrant comic book illustration of a costumed character. "
-            "Bold colors, expressive design, cityscape background, "
-            "vintage comic book art style."
-        ),
-    ]
+    # Use backstory to inform the image so gender/appearance matches the character
+    short_backstory = backstory[:150] if len(backstory) > 150 else backstory
+    image_prompt = (
+        f"A dynamic comic book illustration of a superhero called {safe_name}. "
+        f"{short_backstory} "
+        f"Vibrant colors, expressive character design, "
+        f"cityscape background, vintage comic book style."
+    )
 
     image_base64 = None
     image_generated = False
-    for img_prompt in image_prompts:
-        try:
-            image_response = bedrock_runtime.invoke_model(
-                modelId="amazon.titan-image-generator-v2:0",
-                body=json.dumps(
-                    {
-                        "taskType": "TEXT_IMAGE",
-                        "textToImageParams": {"text": img_prompt[:512]},
-                        "imageGenerationConfig": {
-                            "numberOfImages": 1,
-                            "width": 512,
-                            "height": 512,
-                            "cfgScale": 7.0,
-                        },
-                    }
-                ),
-            )
-            image_result = json.loads(image_response["body"].read())
-            image_base64 = image_result["images"][0]
-            image_generated = True
-            break
-        except Exception as e:
-            if "blocked" in str(e).lower() or "content" in str(e).lower():
-                print(f"Image prompt blocked, trying fallback: {str(e)}")
-                continue
-            raise
+    try:
+        image_response = bedrock_runtime.invoke_model(
+            modelId="amazon.nova-canvas-v1:0",
+            body=json.dumps(
+                {
+                    "taskType": "TEXT_IMAGE",
+                    "textToImageParams": {"text": image_prompt[:512]},
+                    "imageGenerationConfig": {
+                        "numberOfImages": 1,
+                        "width": 512,
+                        "height": 512,
+                        "cfgScale": 7.0,
+                    },
+                }
+            ),
+        )
+        image_result = json.loads(image_response["body"].read())
+        image_base64 = image_result["images"][0]
+        image_generated = True
+    except Exception as e:
+        print(f"Nova Canvas image generation failed: {str(e)}")
 
     image_time = time.time() - image_start
     total_time = time.time() - start_time

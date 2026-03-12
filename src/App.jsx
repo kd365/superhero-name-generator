@@ -203,7 +203,7 @@ function App() {
               <h2 style={styles.cardTitle}>Foundation Model</h2>
               <span style={{ ...styles.badge, background: 'linear-gradient(135deg, #f59e0b, #ef4444)' }}>Bedrock</span>
             </div>
-            <p style={styles.cardDesc}>Amazon Nova Lite + Titan Image Generator</p>
+            <p style={styles.cardDesc}>Amazon Nova Lite + Nova Canvas</p>
 
             <div style={styles.resultArea}>
               {bedrockLoading && (
@@ -240,7 +240,7 @@ function App() {
             </div>
 
             <div style={styles.poweredBy}>
-              Powered by Amazon Nova Lite + Titan Image Generator on Bedrock
+              Powered by Amazon Nova Lite + Nova Canvas on Bedrock
             </div>
           </div>
         </div>

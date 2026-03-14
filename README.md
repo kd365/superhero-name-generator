@@ -1,10 +1,19 @@
-# Superhero Name Generator
+pw# Superhero Name Generator
 
-A full-stack web application that generates superhero names using two AI approaches side by side — a **Classic ML** model (TensorFlow LSTM on SageMaker) and a **Foundation Model** (Amazon Bedrock Nova Lite + Titan Image Generator).
+<table>
+<tr>
+<td width="60%">
 
-## Live Demo
+A full-stack web application that generates superhero names using two AI approaches side by side — a **Classic ML** model (TensorFlow LSTM on SageMaker) and a **Foundation Model** (Amazon Bedrock Nova Lite + Nova Canvas).
 
-**[https://kd365.github.io/superhero-name-generator/](https://kd365.github.io/superhero-name-generator/)**
+**[Live Demo](https://kd365.github.io/superhero-name-generator/)**
+
+</td>
+<td width="40%">
+<img src="screenshots/Tundra.png" alt="Superhero Generator — Tundra" />
+</td>
+</tr>
+</table>
 
 The live demo is limited to 3 generations per visitor to manage AWS costs.
 

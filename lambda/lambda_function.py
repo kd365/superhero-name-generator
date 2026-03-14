@@ -257,7 +257,7 @@ def generate_bedrock(seed):
         f"A dynamic comic book illustration of a superhero called {safe_name}. "
         f"{short_backstory} "
         f"Vibrant colors, expressive character design, "
-        f"cityscape background, vintage comic book style."
+        f"unique background based on backstory, vintage comic book style."
     )
 
     image_base64 = None

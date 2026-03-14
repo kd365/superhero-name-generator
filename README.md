@@ -1,4 +1,4 @@
-pw# Superhero Name Generator
+# Superhero Name Generator
 
 <table>
 <tr>
